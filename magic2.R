@@ -16,14 +16,17 @@ magicdata$class<-as.factor(magicdata$class)
 is.factor(magicdata$class)
 library(corrplot)
 corrplot(cor(magicdata[,-11]),method="number")
+par(mfrow = c(2,2))
+plot(magicdata$fConc,magicdata$fConc1,main = "fconc vs fconc1")
 
-
+table(magicdata$class)
 #pca,preprocess
 library(caret)
 preprocessParams <- preProcess(magicdata[,-11], method=c("center", "scale","pca"))
 print(preprocessParams)
 magicdata.pca<-predict(preprocessParams,magicdata[,-11])
 mydata<-cbind(magicdata.pca,magicdata[,11])
+str(mydata)
 
 #splitting train and test
 set.seed(123)
@@ -65,8 +68,11 @@ preds_train_svmwopca<-predict(svm_wopca)
 #print(conf_matrix)
 #confusionMatrix(test.data$class,preds.model)
 
-
-
+#svm with cv
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+svm_fit <- train(class~., data = train.data, method = "svmLinear", trControl=trctrl,preProcess = c("center", "scale"),tuneLength = 10)
+preds.svm<-predict(svm_fit,test.data)
+confusionMatrix(preds.svm,test.data$class)
   
 #logistic
 library(MASS)
@@ -166,30 +172,36 @@ preds_train_tanhdot<-predict(model.tanhdot)
 #prioir_svm <- tune.svm(formul=class~.,data=train.data, cost =0.1 , gamma =0.4,tunecontrol = tc)
 
 #decision tree CART
-#tc <- tune.control(cross = 5)
 library(rpart)
 #Model the tree
 dc_tree.model <- rpart(class~.,train.data,control = rpart.control(cp =0.01))
-dc_fit <- train(class~., data = train.data, method = "rpart", trControl=trctrl,preProcess = c("center", "scale"),tuneLength = 10)
+pred.dc_tree<-predict(dc_tree.model,test.data)
+prob.dc_tree <- ifelse(pred.dc_tree[, 1] > pred.dc_tree[, 2], 0, 1)
+confusionMatrix(prob.dc_tree,test.data$class)
+confusionMatrix(prob.dc_tree,test.data$class)$overall[1]
 summary(dc_tree.model)
 #Tree Explicability
 #The variable importance can accessed accessing variable.importance from the tree list
 dc_tree.model$variable.importance
 library(rpart.plot)
 rpart.plot(dc_tree.model)
-pred.dc_model <- predict(dc_fit, test.data)
-#control = rpart.control(minsplit = 20, xval = 81, cp = 0.01)
-str(pred.dc_model)
-#preds_tree <- ifelse(pred.dc_model[, 1] > pred.dc_model[, 2], 0, 1)
-confusionMatrix(pred.dc_model,test.data$class)$overall[1]
-confusionMatrix(pred.dc_model,test.data$class)
-preds_train_dc<-predict(dc_tree.model)
-preds_train_tree <- ifelse(preds_train_dc[, 1] > preds_train_dc[, 2], 0, 1)
-
+#test on train data 
+dc_tree.model <- rpart(class~.,train.data,control = rpart.control(cp =0.01))
+pred.dc_tree<-predict(dc_tree.model,train.data)
+prob.dc_tree <- ifelse(pred.dc_tree[, 1] > pred.dc_tree[, 2], 0, 1)
+confusionMatrix(prob.dc_tree,train.data$class)
 #finding cp value
 dtCart=rpart(class ~.,data=train.data,method="class")
 cp=data.frame(printcp(dtCart))
 cp[cp$xstd==min(cp$xstd),][1,]$CP
+
+
+#dt with cv
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+dt_fit <- train(class~., data = train.data, method = "rpart", trControl=trctrl,preProcess = c("center", "scale"),tuneLength = 10)
+preds.fit.dc<-predict(dt_fit,test.data)
+confusionMatrix(preds.fit.dc,test.data$class)
+
 
 #c5.0 moel building
 library(C50)
@@ -210,7 +222,7 @@ confusionMatrix(preds.c5, test.data$class)
 #Bagged Decision Trees
 library(ipred)
 set.seed(1234)
-model_tree_bag <- bagging(class ~ . , data=train.data, control = rpart.control(cp=.0001))
+model_tree_bag <- bagging(class ~ . , data=train.data, cp=.0001)
 
 
 preds_tree_bag <- predict(model_tree_bag, test.data)
@@ -246,6 +258,7 @@ table (test.data$class,ifelse(y_pred >= 1.5,1,0))
 caret::confusionMatrix(test.data$class,ifelse(y_pred >= 1.5,1,0))
 
 
+
 #xgboost on magic data with out pca
 str(magicdata)
 #spliting in to train and test on magic data w.o pca
@@ -272,7 +285,7 @@ caret::confusionMatrix(test.data.md$class,ifelse(y_pred >= 1.6,1,0))
 
 #model building on rf
 library(randomForest)
-model_rf <- randomForest(train.data$class ~ . , train.data,ntree=1500,mtry=8)
+model_rf <- randomForest(train.data$class ~ . , train.data,ntree=1500)
 importance(model_rf)
 varImpPlot(model_rf)
 preds_rf <- predict(model_rf, test.data)
@@ -287,6 +300,30 @@ importance(model_rf)
 varImpPlot(model_rf)
 preds_rf <- predict(model_rf, test.data.md)
 confusionMatrix(preds_rf, test.data.md$class)
+
+#rf with cv
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+metric <- "Accuracy"
+set.seed(123)
+mtry <- sqrt(ncol(magicdata))
+str(magicdata)
+tunegrid <- expand.grid(.mtry=mtry)
+rf_default <- train(class~., data=train.data.md, method="rf", tuneGrid=tunegrid, trControl=trctrl,preProcess = c("center", "scale"))
+preds.rf.cv<-predict(rf_default,test.data.md)
+confusionMatrix(preds.rf.cv,test.data.md$class)
+print(rf_default)
+
+
+# Random Search
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
+set.seed(123)
+mtry <- sqrt(ncol(magicdata))
+rf_random <- train(class~., data=train.data.md, method="rf", tuneLength=15, trControl=control)
+print(rf_random)
+plot(rf_random)
+preds.rf.cv<-predict(rf_random,test.data.md)
+confusionMatrix(preds.rf.cv,test.data.md$class)
+
 
 #knn 
 library(class)
@@ -320,12 +357,24 @@ test_pred <- predict(knn_fit, newdata = test.data)
 table(test_pred)
 confusionMatrix(test_pred,test.data$class)
 
+#knn wo pca 
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+set.seed(3333)
+knn_fit <- train(class~., data = train.data.md, method = "knn", trControl=trctrl,preProcess = c("center", "scale"),tuneLength = 10)
+#We can see variation in Accuracy w.r.t K value by plotting these in a graph.
+plot(knn_fit)
+test_pred <- predict(knn_fit, newdata = test.data.md)
+table(test_pred)
+confusionMatrix(test_pred,test.data$class)
+
+
 #ANN
 train.x = data.matrix(train.data[,-8])
 train.y = as.numeric(as.character(train.data[,8]))
 str(train.y)
 test.x = data.matrix(test.data[,-8])
 test.y = as.numeric(as.character(test.data[,8]))
+install.packages("mxnet")
 library(mxnet)
 mx.set.seed(0)
 Sys.time() -> start
@@ -390,9 +439,9 @@ confusionMatrix(pred.label,test.y)
 
 
 #staking 
-predDF <- data.frame(preds_rf, pred.dc_model,pred.ano,pred.tan,preds.c5, class = test.data$class)
+predDF <- data.frame(preds_rf,pred.ano,pred.tan,preds.c5, class = test.data$class)
 pred1V <- predict(model_rf, test.data)
-pred2V  <- predict(dc_fit, test.data)
+pred2V  <- predict(dt_fit, test.data)
 pred3v <- predict(model_svm.ano,test.data)
 pred4v<-predict(model.tanhdot,test.data)
 pred5v<-predict(c5_tree, test.data)
